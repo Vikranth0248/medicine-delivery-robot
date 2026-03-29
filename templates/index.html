@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Medbot Control Interface</title>
+    <style>
+        :root { --bg: #0a0e1a; --panel: #161b22; --accent: #4facfe; --text: #fff; --border: #30363d; }
+        body { margin: 0; background: var(--bg); color: var(--text); font-family: sans-serif; }
+        header { display: flex; justify-content: space-between; padding: 1rem 5%; background: var(--panel); border-bottom: 1px solid var(--border); }
+        .main-container { display: grid; grid-template-columns: 1.2fr 1fr; gap: 20px; padding: 20px 5%; }
+        .table-section, .detail-panel { background: var(--panel); padding: 20px; border-radius: 12px; border: 1px solid var(--border); }
+        table { width: 100%; border-collapse: collapse; }
+        th, td { padding: 12px; border-bottom: 1px solid var(--border); text-align: left; }
+        .visualizer { height: 400px; position: relative; display: flex; justify-content: center; align-items: center; background: #0d1117; border-radius: 12px; margin-bottom: 20px; }
+        .chamber { position: absolute; width: 80px; height: 50px; border-radius: 8px; display: flex; flex-direction: column; align-items: center; justify-content: center; color: #000; font-weight: bold; cursor: pointer; transition: 0.2s; font-size: 0.7rem; }
+        .grid-info { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 15px; }
+        .data-item { background: #0d1117; padding: 10px; border-radius: 8px; }
+        input { width: 100%; background: #1c2128; border: 1px solid var(--border); color: white; padding: 5px; border-radius: 4px; }
+        input:disabled { background: transparent; border: none; }
+        .btn { width: 100%; padding: 10px; margin-top: 10px; border-radius: 6px; border: none; cursor: pointer; font-weight: bold; }
+        @media (max-width: 1000px) { .main-container { grid-template-columns: 1fr; } }
+    </style>
+</head>
+<body>
+    <header><h2>Medbot Control Interface</h2><button class="btn" style="width:auto; background:var(--accent); color:white">+ Add Patient</button></header>
+    <div class="main-container">
+        <div class="table-section">
+            <h3>Inventory</h3>
+            <table><thead><tr><th>ID</th><th>Name</th><th>Units</th><th>Days Left</th></tr></thead><tbody id="tableBody"></tbody></table>
+            <button class="btn" style="background:#238636; color:white" onclick="downloadCSV()">Download Report</button>
+        </div>
+        <div>
+            <div class="visualizer" id="visualizer"></div>
+            <div class="detail-panel">
+                <div id="placeholder">Select a chamber to edit</div>
+                <div id="infoCard" style="display:none">
+                    <h3 id="display-title"></h3>
+                    <div class="grid-info">
+                        <div class="data-item"><small>NAME</small><input type="text" id="in-name" disabled></div>
+                        <div class="data-item"><small>UNITS</small><input type="number" id="in-units" disabled></div>
+                        <div class="data-item"><small>T1</small><input type="time" id="in-t1" disabled></div>
+                        <div class="data-item"><small>T2</small><input type="time" id="in-t2" disabled></div>
+                        <div class="data-item"><small>T3</small><input type="time" id="in-t3" disabled></div>
+                        <div class="data-item"><small>REFILL</small><strong id="display-days"></strong></div>
+                    </div>
+                    <button class="btn" id="editBtn" style="background:#444; color:white" onclick="toggleEdit()">Edit Content</button>
+                    <button class="btn" id="saveBtn" style="background:#238636; color:white; display:none" onclick="saveData()">Save Changes</button>
+                </div>
+            </div>
+        </div>
+    </div>
+    <script>
+        let chambers = []; let currentId = null; let isEditing = false;
+        async function load() {
+            const res = await fetch('/get_chambers');
+            if (res.ok) { chambers = await res.json(); render(); }
+        }
+        function render() {
+            document.getElementById('tableBody').innerHTML = chambers.map(ch => {
+                const d = ch.dosages.filter(t => t).length;
+                const days = d > 0 ? (ch.units / d).toFixed(1) : "∞";
+                const r = Math.min(ch.units/20, 1);
+                return `<tr><td>${ch.id}</td><td>${ch.name}</td><td style="color:rgb(${255*(1-r)},${255*r},0)">${ch.units}</td><td>${days}d</td></tr>`;
+            }).join('');
+            const viz = document.getElementById('visualizer'); viz.innerHTML = '';
+            const rect = viz.getBoundingClientRect(); const radius = 140;
+            chambers.forEach((ch, i) => {
+                const el = document.createElement('div'); el.className = 'chamber';
+                const r = Math.min(ch.units/20, 1); el.style.backgroundColor = `rgb(${255*(1-r)},${255*r},0)`;
+                el.innerHTML = `<span>${ch.name}</span>${ch.units}U`;
+                const angle = (i * 45 - 90) * (Math.PI / 180);
+                el.style.left = `${(rect.width/2) + radius * Math.cos(angle) - 40}px`;
+                el.style.top = `${(rect.height/2) + radius * Math.sin(angle) - 25}px`;
+                el.onclick = () => selectChamber(ch.id); viz.appendChild(el);
+            });
+        }
+        function selectChamber(id) {
+            currentId = id; isEditing = false; const ch = chambers.find(c => c.id === id);
+            document.getElementById('placeholder').style.display = 'none';
+            document.getElementById('infoCard').style.display = 'block';
+            document.getElementById('in-name').value = ch.name; document.getElementById('in-units').value = ch.units;
+            document.getElementById('in-t1').value = ch.dosages[0]; document.getElementById('in-t2').value = ch.dosages[1];
+            document.getElementById('in-t3').value = ch.dosages[2]; toggleInputs(false);
+        }
+        function toggleEdit() {
+            isEditing = !isEditing; toggleInputs(isEditing);
+            document.getElementById('saveBtn').style.display = isEditing ? 'block' : 'none';
+            document.getElementById('editBtn').innerText = isEditing ? 'Cancel' : 'Edit Content';
+        }
+        function toggleInputs(en) { ['in-name','in-units','in-t1','in-t2','in-t3'].forEach(id => document.getElementById(id).disabled = !en); }
+        async function saveData() {
+            const updated = { id: currentId, name: document.getElementById('in-name').value, units: parseInt(document.getElementById('in-units').value), dosages: [document.getElementById('in-t1').value, document.getElementById('in-t2').value, document.getElementById('in-t3').value] };
+            const res = await fetch('/update_chamber', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(updated)});
+            if (res.ok) { const idx = chambers.findIndex(c => c.id === currentId); chambers[idx] = {...chambers[idx], ...updated}; toggleEdit(); render(); }
+        }
+        window.onload = load;
+    </script>
+</body>
+</html>
